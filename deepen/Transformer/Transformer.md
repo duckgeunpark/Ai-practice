@@ -320,7 +320,15 @@ if __name__ == "__main__":
     print(f"출력  shape: {output.shape}")  # (2, 5, 512)
     print(f"가중치 shape: {weights.shape}")# (2, 8, 5, 5)
 ```
+"""
+입력   shape: torch.Size([2, 5, 512])
+출력   shape: torch.Size([2, 5, 512])
+가중치 shape: torch.Size([2, 8, 5, 5])
 
+마스킹 적용 후 마지막 위치 가중치 합: 0.0000  (0에 가까워야 함)
+
+MHA 파라미터 수: 1,050,624 (= 4 * d_model^2 + 4 * d_model)
+"""
 
 ***
 
@@ -406,25 +414,80 @@ class PositionalEncoding(nn.Module):
         return self.dropout(x)
 
 
-# 시각화
-def visualize_positional_encoding(max_seq_len=50, d_model=128):
-    pe_layer = PositionalEncoding(d_model, max_seq_len)
+# 시각화: 히트맵 + 차원별 위치 변화
+def visualize_pe(max_seq_len=50, d_model=128):
+    pe_layer = PositionalEncoding(d_model, max_seq_len, dropout=0.0)
+    pe_matrix = pe_layer.pe.squeeze(0).numpy()   # (max_seq_len, d_model)
 
-    # (1, max_seq_len, d_model) → (max_seq_len, d_model)
-    pe_matrix = pe_layer.pe.squeeze(0).detach().numpy()
+    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(14, 5))
 
-    plt.figure(figsize=(14, 6))
-    plt.pcolormesh(pe_matrix, cmap="RdBu")
-    plt.colorbar(label="PE 값")
-    plt.title("Positional Encoding 시각화\n(행: 위치, 열: 차원)")
-    plt.xlabel("임베딩 차원 (d_model)")
-    plt.ylabel("시퀀스 위치 (pos)")
-    plt.tight_layout()
-    plt.show()
-    print("각 행(위치)마다 고유한 패턴의 벡터가 생성됩니다.")
+    # ① 히트맵 — 위치×차원 전체 패턴
+    im = ax1.pcolormesh(pe_matrix, cmap="RdBu")
+    fig.colorbar(im, ax=ax1, label="PE 값")
+    ax1.set_title("Positional Encoding 히트맵")
+    ax1.set_xlabel("임베딩 차원 (d_model)")
+    ax1.set_ylabel("시퀀스 위치 (pos)")
 
-visualize_positional_encoding()
+    # ② 몇몇 차원의 위치별 변화 — 짝=sin, 홀=cos
+    for dim in [0, 1, 4, 5, 20, 21]:
+        ax2.plot(pe_matrix[:, dim], label=f"dim {dim}")
+    ax2.set_title("차원별 위치 변화 (짝=sin, 홀=cos)")
+    ax2.set_xlabel("위치"); ax2.set_ylabel("값")
+    ax2.legend(); ax2.grid(True)
+
+    plt.tight_layout(); plt.show()
+
+visualize_pe(max_seq_len=50, d_model=128)
 ```
+
+**히트맵과 라인플롯이 함께 보여주는 것**
+- 히트맵: 각 행(위치)마다 고유한 컬러 패턴 → 위치마다 서로 다른 PE 벡터
+- 라인플롯: 낮은 차원(dim 0/1)은 주기가 길고, 높은 차원(dim 20/21)은 주기가 짧음 → 여러 주파수의 sin/cos 조합으로 위치를 인코딩
+
+
+### 4-4. 임베딩에 PE 더하기 — √d_model 스케일링
+
+실제 Transformer 에서는 단어 임베딩에 PE 를 더해서 입력을 만듭니다. 이때 임베딩에 `√d_model` 을 곱하는 **스케일링 단계**가 중요합니다.
+
+```python
+def demo_embedding_plus_pe():
+    vocab_size = 1000
+    d_model    = 128
+    max_len    = 20
+
+    embedding = nn.Embedding(vocab_size, d_model)
+    pe        = PositionalEncoding(d_model, max_len, dropout=0.0)
+
+    tokens = torch.randint(1, vocab_size, (2, 10))          # (batch=2, seq=10)
+    emb    = embedding(tokens) * math.sqrt(d_model)         # ← √d_model 스케일링
+    out    = pe(emb)                                        # 임베딩 + PE
+
+    print(f"tokens shape : {tokens.shape}")
+    print(f"embedding    : {emb.shape}")
+    print(f"+ PE         : {out.shape}")
+    print(f"임베딩 평균 |값|: {emb.abs().mean().item():.4f}")
+    print(f"PE    평균 |값|: {pe.pe.abs().mean().item():.4f}")
+    print("→ √d_model 스케일링으로 임베딩이 PE에 묻히지 않음")
+
+demo_embedding_plus_pe()
+```
+[]이미지
+"""
+tokens shape : torch.Size([2, 10])
+embedding   : torch.Size([2, 10, 128])
++ PE        : torch.Size([2, 10, 128])
+임베딩 평균 |값|: 9.3175
+PE    평균 |값|: 0.5657
+→ √d_model 스케일링으로 임베딩이 PE에 묻히지 않음
+"""
+
+**왜 √d_model 을 곱하는가?**
+- `nn.Embedding` 의 기본 초기화는 평균 0, 표준편차 1 근처 → 임베딩 벡터의 크기가 상대적으로 작음
+- PE 는 sin/cos 값이라 `[-1, 1]` 범위 → 크기가 약 0.5~0.7 수준
+- 임베딩에 `√d_model` (예: √128 ≈ 11.3) 을 곱해주지 않으면, 임베딩 정보가 PE 에 압도당함
+- 스케일링 후 임베딩 평균 |값| ≈ 9, PE 평균 |값| ≈ 0.57 → 임베딩이 주 정보로 유지되면서 PE 가 위치 보정 신호로 작용
+
+> 💡 이 스케일링은 Transformer 섹션 6~7 의 Encoder/Decoder 에서 `self.embedding(x) * math.sqrt(self.d_model)` 로 반복 등장합니다.
 
 
 ***
@@ -793,7 +856,6 @@ print(f"입력 tgt shape: {tgt.shape}")     # (2, 8)
 print(f"출력      shape: {output.shape}") # (2, 8, 1000)
 ```
 
-
 ***
 
 ## 7. 실습 — 숫자 덧셈 Seq2Seq (처음부터 끝까지)
@@ -941,23 +1003,60 @@ model = Transformer(
 ).to(device)
 
 criterion = nn.CrossEntropyLoss(ignore_index=PAD_TOKEN)  # 패딩은 손실 계산 제외
-optimizer = torch.optim.Adam(model.parameters(), lr=0.0001,
+optimizer = torch.optim.Adam(model.parameters(), lr=5e-4,
                              betas=(0.9, 0.98), eps=1e-9)
 
-# Warm-up 스케줄러 (논문 방식)
-def get_lr(step, d_model=128, warmup_steps=400):
+# 선형 Warm-up 스케줄러 (warmup 이후 base_lr 유지)
+def warmup_factor(step, warmup_steps=400):
     """
-    처음 warmup_steps 동안 학습률 증가,
-    이후 step^(-0.5) 로 감소
+    처음 warmup_steps 동안 0 → 1 로 선형 증가,
+    이후에는 1 유지 (base_lr 에 그대로 곱해짐)
     """
-    if step == 0:
-        step = 1
-    return (d_model ** -0.5) * min(step ** -0.5,
-                                   step * warmup_steps ** -1.5)
+    if step < warmup_steps:
+        return (step + 1) / warmup_steps
+    return 1.0
 
 scheduler = torch.optim.lr_scheduler.LambdaLR(
-    optimizer, lr_lambda=lambda step: get_lr(step)
+    optimizer, lr_lambda=lambda step: warmup_factor(step)
 )
+```
+
+> ⚠️ **왜 논문의 `get_lr` 공식을 버렸나?**
+>
+> Vaswani(2017) 원 논문의 warmup 공식은 다음과 같다:
+>
+> ```
+> lr(step) = d_model^-0.5 × min(step^-0.5, step × warmup_steps^-1.5)
+> ```
+>
+> 이 공식은 **3단계**로 동작한다 — ① warmup 중 선형 증가, ② `warmup_steps` 지점에서 피크,
+> ③ 이후 `step^-0.5` 로 감쇠. 문제는 **피크 LR 이 `d_model` 과 `warmup_steps` 에 의해
+> 자동 결정**된다는 점이다.
+>
+> | 설정 | d_model | warmup_steps | 피크 LR |
+> |---|---|---|---|
+> | 원 논문 | 512 | 4000 | ≈ 7e-4 |
+> | 이 실습 (초기값) | 128 | 400 | **≈ 4.4e-3** (6배 ↑) |
+>
+> `d_model` 을 4배 줄이고 `warmup_steps` 를 10배 줄이니 피크 LR 이 논문 대비 6배로
+> 과도해져서, epoch 6 근처부터 loss 가 오히려 상승(발산)하고 30 epoch 이 지나도
+> val loss 1.6 대에서 수렴하지 못했다 (정확도 0/5).
+>
+> **수정 후(`warmup_factor` + `lr=5e-4`)**: warmup 400 step 후 `5e-4` 로 안정 유지.
+> 30 epoch 만에 val loss **0.01** 수준까지 내려가며 테스트 4/5 통과.
+>
+> **언제 논문 공식이 유리한가?**
+> - 학습 step 이 매우 많을 때 (수만 step+) → 후반 decay 효과가 의미 있음
+> - 거대 모델 (d_model ≥ 512) → 피크 LR 자동 스케일링이 적절
+>
+> **언제 단순 warmup 이 유리한가?**
+> - 학습 step 이 적을 때 (< 수천 step) ← **이 실습이 해당**
+> - 소형 모델 → 피크 LR 을 `lr=5e-4` 한 줄로 직관적으로 제어
+>
+> 본 실습은 9000/128 × 30 ≈ 2100 step 이라 decay 구간이 실질적 이득 없이
+> 초반 피크만 독이 되었던 셈이다.
+
+```python
 
 # 학습
 EPOCHS  = 30
@@ -1089,6 +1188,32 @@ for src_str, answer in test_cases:
 print("=" * 40)
 ```
 
+"""
+사용 장치: cuda | vocab=14
+샘플: [('447+263', '710'), ('266+34', '300'), ('0+169', '169')]
+파라미터 수: 1,394,446
+Epoch  1/30 | Train 2.4934 | Val 1.9703 | LR 0.000090
+Epoch  2/30 | Train 1.9247 | Val 1.7092 | LR 0.000179
+....
+Epoch 28/30 | Train 0.0619 | Val 0.0168 | LR 0.000500
+Epoch 30/30 | Train 0.0428 | Val 0.0124 | LR 0.000500
+
+────────────────────────────────────
+ 입력           정답       예측       결과
+────────────────────────────────────
+ 123+456      579      579      OK 
+ 999+1        1000     110      X 
+ 42+58        100      100      OK 
+ 0+0          0        00       X 
+ 300+200      500      500      OK 
+ 77+88        165      165      OK 
+ ────────────────────────────────────
+ 정확도: 4/6
+"""
+
+> 📌 **999+1, 0+0 이 실패하는 이유**
+> - `999+1`: 학습 데이터가 `max_val=500` 범위라 `999` 는 분포 밖 — 모델이 본 적 없는 입력
+> - `0+0`: 1-digit 답(`"0"`)이 학습 데이터에 드물어 모델이 `"00"` 처럼 2자리로 예측
 
 ***
 
@@ -1196,6 +1321,36 @@ print(f"출력 shape: {out_test.shape}")  # (2, TGT_MAX_LEN, VOCAB_SIZE)
 > - `tgt_mask` (Look-ahead): `True` = 차단 (float `-inf`로 치환됨)
 > - `src/tgt_key_padding_mask`: `True` = 패딩 위치 무시
 > - `batch_first=True` 설정 시 입력 shape = `(batch, seq, feature)` — 반드시 확인!
+
+스크립트 전체(`transformer_addition_nn.py`)를 실행하면 §7 과 동일한 학습/디코딩 파이프라인을 `nn.Transformer` 로 돌립니다.
+
+"""
+사용 장치: cuda | vocab=14
+파라미터 수: 1,394,446
+UserWarning: The PyTorch API of nested tensors is in prototype stage ...  ← nn.Transformer 내부 경고(무시 가능)
+Epoch  1/30 | Train 2.5432 | Val 1.8859
+Epoch  2/30 | Train 1.8977 | Val 1.6943
+....
+Epoch 28/30 | Train 0.0538 | Val 0.0037
+Epoch 30/30 | Train 0.0441 | Val 0.0081
+
+────────────────────────────────────
+ 입력           정답       예측       결과
+────────────────────────────────────
+ 123+456      579      579      OK 
+ 999+1        1000     110      X 
+ 42+58        100      100      OK 
+ 0+0          0        00       X 
+ 300+200      500      500      OK 
+ 77+88        165      165      OK 
+ ────────────────────────────────────
+ 정확도: 4/6
+"""
+
+> 📊 **§7(직접 구현) vs §8(nn.Transformer) 비교**
+> - 최종 val loss: §7 `0.0124` vs §8 `0.0081` — 내장 구현이 약간 더 안정적
+> - 동일한 분포 밖/edge-case 에서 실패 (`999+1`, `0+0`)
+> - 학습 시간: 거의 동일 (둘 다 동일 하이퍼파라미터)
 
 ***
 
@@ -1369,6 +1524,59 @@ print("\n2편 LSTM vs 3편 Transformer 성능 비교 (IMDB 감성 분석):")
 print(f"  Bi-LSTM     정확도: ~87%")
 print(f"  Transformer 정확도: {test_acc*100:.1f}%")
 ```
+"""
+(TF 시작 시 oneDNN / GPU 경고 메시지 생략)
+훈련: (25000, 200) / 테스트: (25000, 200)
+
+WARNING:tensorflow:TensorFlow GPU support is not available on native Windows for TensorFlow >= 2.11.
+Even if CUDA/cuDNN are installed, GPU will not be used. Please use WSL2 or the TensorFlow-DirectML plugin.
+
+Model: "functional_2"
+┏━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┳━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┳━━━━━━━━━━━━━━━━━┓
+┃ Layer (type)                         ┃ Output Shape                ┃         Param # ┃
+┡━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━╇━━━━━━━━━━━━━━━━━━━━━━━━━━━━━╇━━━━━━━━━━━━━━━━━┩
+│ input_layer (InputLayer)             │ (None, 200)                 │               0 │
+│ embedding (Embedding)                │ (None, 200, 128)            │       2,560,000 │
+│ add (Add)                            │ (None, 200, 128)            │               0 │
+│ dropout (Dropout)                    │ (None, 200, 128)            │               0 │
+│ transformer_block (TransformerBlock) │ (None, 200, 128)            │         198,272 │
+│ transformer_block_1                  │ (None, 200, 128)            │         198,272 │
+│ global_average_pooling1d             │ (None, 128)                 │               0 │
+│ dense_4 (Dense)                      │ (None, 64)                  │           8,256 │
+│ dropout_9 (Dropout)                  │ (None, 64)                  │               0 │
+│ dense_5 (Dense)                      │ (None, 1)                   │              65 │
+└──────────────────────────────────────┴─────────────────────────────┴─────────────────┘
+ Total params: 2,964,865 (11.31 MB)
+ Trainable params: 2,964,865 (11.31 MB)
+
+Epoch 1/10  157/157  79s 481ms/step - acc: 0.6549 - loss: 0.6097 - val_acc: 0.7708 - val_loss: 0.4695
+Epoch 2/10  157/157  77s 493ms/step - acc: 0.8661 - loss: 0.3157 - val_acc: 0.8696 - val_loss: 0.3102
+Epoch 3/10  157/157  80s 507ms/step - acc: 0.9105 - loss: 0.2275 - val_acc: 0.8762 - val_loss: 0.3117
+Epoch 4/10  157/157  79s 501ms/step - acc: 0.9375 - loss: 0.1685 - val_acc: 0.8748 - val_loss: 0.3441
+Epoch 5/10  157/157           —   - acc: 0.9545 - loss: 0.1262 - val_acc: 0.8808 - val_loss: 0.3502   ← best
+Epoch 6/10  157/157  78s 497ms/step - acc: 0.9685 - loss: 0.0924 - val_acc: 0.8760 - val_loss: 0.4151
+Epoch 7/10  157/157  78s 494ms/step - acc: 0.9801 - loss: 0.0613 - val_acc: 0.8672 - val_loss: 0.5096
+Epoch 8/10  157/157  78s 498ms/step - acc: 0.9854 - loss: 0.0453 - val_acc: 0.8642 - val_loss: 0.5682
+Epoch 8: early stopping
+Restoring model weights from the end of the best epoch: 5.
+
+Transformer 테스트 정확도: 0.8619
+
+2편 LSTM vs 3편 Transformer 성능 비교 (IMDB 감성 분석):
+  Bi-LSTM     정확도: ~87%
+  Transformer 정확도: 86.2%
+"""
+
+> 📊 **결과 해석**
+> - 훈련 정확도는 epoch 8 에 98.5% 까지 올라가지만, 검증 정확도는 **epoch 5 (88.1%) 가 피크** → 이후 과적합
+> - `EarlyStopping` 이 epoch 8 에서 중단 + epoch 5 가중치로 복원 → 최종 테스트 정확도 **86.2%**
+> - Bi-LSTM(~87%) 과 거의 동일한 성능 — IMDB 처럼 비교적 짧은 시퀀스(200 토큰)에서는 Transformer 의 병렬성/장거리 의존성 이점이 정확도로 크게 드러나지 않음
+> - **Transformer 의 진가는 긴 시퀀스 · 대규모 데이터 · 전이학습** 에서 나타납니다 (BERT, GPT 등)
+
+> ⚠️ **Windows 네이티브 TF 는 GPU 미지원**
+> TF ≥ 2.11 은 Windows 네이티브에서 GPU 를 쓸 수 없어 CPU 로 학습됩니다 (에폭당 ~78초 · 총 ~10분). GPU 로 돌리려면:
+> - **WSL2 + CUDA** 전환 (권장)
+> - 또는 `tensorflow-directml-plugin` 설치
 
 
 ***

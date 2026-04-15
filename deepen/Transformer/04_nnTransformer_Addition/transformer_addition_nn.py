@@ -167,21 +167,20 @@ class AdditionDataset(Dataset):
         )
 
 
-def get_lr(step, d_model=128, warmup_steps=400):
-    if step == 0:
-        step = 1
-    return (d_model**-0.5) * min(step**-0.5, step * warmup_steps**-1.5)
+def warmup_factor(step, warmup_steps=400):
+    # 0 → 1 로 선형 증가 후 1 유지 (base_lr 에 곱해짐)
+    if step < warmup_steps:
+        return (step + 1) / warmup_steps
+    return 1.0
 
 
-def train(model, train_loader, val_loader, device, epochs=100):
+def train(model, train_loader, val_loader, device, epochs=30):
     criterion = nn.CrossEntropyLoss(ignore_index=PAD_TOKEN)
-    # LambdaLR 은 optimizer.lr 에 `lr_lambda(step)` 를 곱합니다.
-    # 논문의 warmup 공식은 "절대 LR"이므로 base_lr=1.0 으로 두어야 공식 값이 그대로 들어갑니다.
     optimizer = torch.optim.Adam(
-        model.parameters(), lr=1.0, betas=(0.9, 0.98), eps=1e-9
+        model.parameters(), lr=5e-4, betas=(0.9, 0.98), eps=1e-9
     )
     scheduler = torch.optim.lr_scheduler.LambdaLR(
-        optimizer, lr_lambda=lambda step: get_lr(step)
+        optimizer, lr_lambda=lambda step: warmup_factor(step)
     )
 
     history = {"train_loss": [], "val_loss": []}
@@ -267,7 +266,7 @@ def main():
     n_params = sum(p.numel() for p in model.parameters())
     print(f"파라미터 수: {n_params:,}")
 
-    history = train(model, train_loader, val_loader, device, epochs=100)
+    history = train(model, train_loader, val_loader, device, epochs=30)
 
     test_cases = [
         ("123+456", "579"),
