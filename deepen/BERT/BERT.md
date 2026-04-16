@@ -335,10 +335,10 @@ for r in result[:3]:
 # ── 질의응답 ────────────────────────────────────────────────────
 qa = pipeline("question-answering")
 
-context = """
+context = ""
 Hugging Face is a company that develops tools for building machine learning
 applications. It was founded in 2016 and is headquartered in New York City.
-"""
+""
 result = qa(question="When was Hugging Face founded?", context=context)
 print(f"  답변: {result['answer']}")   # 2016
 print(f"  점수: {result['score']:.4f}")
@@ -358,7 +358,7 @@ model     = AutoModel.from_pretrained(model_name)
 print(f"모델 파라미터 수: {sum(p.numel() for p in model.parameters()):,}")
 # 109,482,240 (약 1억 1천만)
 ```
-
+***
 
 ### 5-4. 토크나이저(Tokenizer) 완벽 이해
 
@@ -470,10 +470,15 @@ print(dataset)
 # })
 
 # 실습용으로 일부만 사용 (전체 학습 시 시간 매우 오래 걸림)
-train_texts  = dataset["train"]["text"][:2000]
-train_labels = dataset["train"]["label"][:2000]
-test_texts   = dataset["test"]["text"][:500]
-test_labels  = dataset["test"]["label"][:500]
+# ⚠️ IMDB는 label 순으로 정렬되어 있어 앞에서 그대로 잘라쓰면
+#    전부 부정(label=0) 샘플만 들어옴 → 반드시 shuffle 후 slicing
+train_shuffled = dataset["train"].shuffle(seed=42)
+test_shuffled  = dataset["test"].shuffle(seed=42)
+
+train_texts  = train_shuffled["text"][:2000]
+train_labels = train_shuffled["label"][:2000]
+test_texts   = test_shuffled["text"][:500]
+test_labels  = test_shuffled["label"][:500]
 
 # 검증 세트 분리 (9:1)
 train_texts, val_texts, train_labels, val_labels = train_test_split(
@@ -485,6 +490,11 @@ print(f"샘플: {train_texts[0][:80]}...")
 print(f"레이블: {'긍정' if train_labels[0] == 1 else '부정'}")
 ```
 
+"""
+훈련: 1800개 / 검증: 200개 / 테스트: 500개
+샘플: Nick Cage is Randall Raines, a retired car thief who is forced out of retirement...
+레이블: 긍정
+"""
 
 ### 6-2. 토크나이저 적용 및 Dataset 클래스
 
@@ -538,6 +548,11 @@ print(f"attention_mask shape: {sample['attention_mask'].shape}")  # (128,)
 print(f"label: {sample['label']}")
 ```
 
+"""
+input_ids shape:      torch.Size([128])
+attention_mask shape: torch.Size([128])
+label: 1
+"""
 
 ### 6-3. BertForSequenceClassification 모델
 
@@ -553,6 +568,11 @@ train_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
 print(f"전체 파라미터: {total_params:,}")
 print(f"학습 파라미터: {train_params:,}")
 ```
+
+"""
+전체 파라미터: 109,483,778
+학습 파라미터: 109,483,778
+"""
 
 ```
 BertForSequenceClassification 구조:
@@ -598,8 +618,12 @@ print(f"총 학습 스텝: {total_steps}")
 print(f"Warm-up 스텝: {warmup_steps}")
 ```
 
+"""
+총 학습 스텝: 339
+Warm-up 스텝: 33
+"""
+
 > 💡 **AdamW** — Adam 옵티마이저에 Weight Decay를 올바르게 적용한 버전입니다. BERT Fine-tuning의 표준 옵티마이저입니다.
->
 > 💡 **Warm-up** — 처음 몇 스텝 동안 학습률을 0에서 LR까지 서서히 높입니다. 사전 학습된 가중치가 초반에 급격히 망가지는 것을 방지합니다.
 
 ### 6-5. 학습 루프
@@ -696,6 +720,24 @@ for epoch in range(EPOCHS):
         print(f"  ✅ 최고 모델 저장 (Val Acc: {val_acc:.4f})")
 ```
 
+"""
+Epoch 1/3
+───────────────────────────────────────
+Train Loss: 0.5409 | Train Acc: 0.7161
+Val   Loss: 0.3171   | Val   Acc: 0.8650
+  ✅ 최고 모델 저장 (Val Acc: 0.8650)
+
+Epoch 2/3
+───────────────────────────────────────
+Train Loss: 0.2700 | Train Acc: 0.9028
+Val   Loss: 0.3295   | Val   Acc: 0.8550
+
+Epoch 3/3
+───────────────────────────────────────
+Train Loss: 0.1432 | Train Acc: 0.9556
+Val   Loss: 0.3404   | Val   Acc: 0.8750
+  ✅ 최고 모델 저장 (Val Acc: 0.8750)
+"""
 
 ### 6-6. 평가 및 예측
 
@@ -721,6 +763,7 @@ ax2.set_xlabel("Epoch"); ax2.legend(); ax2.grid(True)
 plt.tight_layout()
 plt.show()
 
+![Figure_1-1.png](/api/assets/8788cd54-7172-4a3e-a05d-afe973060082)
 
 # 직접 문장 예측
 def predict_sentiment(model, tokenizer, text, device):
@@ -749,6 +792,13 @@ predict_sentiment(model, tokenizer,
     "Worst movie I've ever seen. Complete waste of time.", device)
 ```
 
+"""
+최종 테스트 정확도: 0.8600
+입력: This movie was absolutely brilliant! The acting was superb....
+예측: 긍정 😊  (부정: 0.0167 / 긍정: 0.9833)
+입력: Worst movie I've ever seen. Complete waste of time....
+예측: 부정 😞  (부정: 0.9822 / 긍정: 0.0178)
+"""
 
 ***
 
@@ -879,6 +929,7 @@ plt.show()
 # temperature > 1 : 분포 평평해짐 → 다양하지만 엉뚱한 텍스트 가능
 ```
 
+![Figure_2-1.png](/api/assets/8177778e-1212-44cb-80ef-eb317ac66298)
 
 ### 7-4. 여러 문장 동시 생성
 
@@ -908,6 +959,35 @@ generate_texts("Once upon a time in a land far away,", n=3)
 generate_texts("The most important thing about deep learning is", n=3)
 ```
 
+"""
+        Setting `pad_token_id` to `eos_token_id`:50256 for open-end generation.
+        프롬프트: "Once upon a time in a land far away,"
+  [1] Once upon a time in a land far away, a white man, whom the Lord hath chosen as a prophet, 
+  and made a king over the Jews, that they might judge him.
+  And he did, and went out. And the Jews scattered among the nations, and slew him. 
+  So they brought him back to Babylon. But he spake unto them, saying, Behold, I am your God; I am a god, and am your
+  [2] Once upon a time in a land far away, with a vast, vast, expansive land far from any nation or country,
+  that the nations of the earth might be able to unite to save the people. 
+  And with these words they were lifted up into heaven, where they lay upon the throne of the Most High God, as high as the throne above the heavens.
+  And it is this same God who was the first to go forth and give this people
+  [3] Once upon a time in a land far away, there was a small group of people, mostly merchants and others, that wished to get back to their old lives. 
+  They would not, as they now say, go back to the land that they used to be in. It was called Zilchay.
+  It was a little bit of a town, but it was still a small town, and there were very few people there. All
+
+
+        Setting `pad_token_id` to `eos_token_id`:50256 for open-end generation.
+        프롬프트: "The most important thing about deep learning is"
+    [1] The most important thing about deep learning is that the training data we have here is really useful for the next step to solving complex algorithms. 
+    And we need to think about how to do that. We need to create more general deep learning algorithms, like neural networks, to do those general operations. 
+    If you want to do a deep learning neural network, like a neural network to see how much of a human is alive, and how much more we
+    [2] The most important thing about deep learning is the ability to train your neural networks to recognize objects, and it's only natural that they will. You can use deep
+    learning to learn how to recognize what you're seeing in a movie or a picture to make a decision. But you don't have to learn to recognize people.
+    The other important thing is the use of deep learning in the classroom, where students learn to teach, and there
+    [3] The most important thing about deep learning is that it allows you to design your applications as you work on them.
+    In this case, our application is a WebApp. It has a main entry point called Page 1, 
+    and a sub-entry called "Hello World!" which contains some images of the page.
+    We can then make the WebApp a custom content store. , which contains the text and images of Page 1. We
+"""
 
 ***
 

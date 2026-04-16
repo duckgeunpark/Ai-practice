@@ -315,13 +315,33 @@ Unsloth:
 
 ### 6-2. Unsloth 설치
 
+> 💡 **2025년 2월 말부터 Windows 네이티브 공식 지원**
+> — WSL 없이도 Windows에서 직접 설치 가능합니다.
+
+#### 공통 설치
 ```bash
-# CUDA 12.1 기준
+pip install unsloth
+```
+
+#### Windows 네이티브 (PyTorch CUDA 먼저)
+```bash
+# 1. PyTorch CUDA 버전 설치 (CUDA 12.8 기준)
+pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu128
+
+# 2. 의존성 설치
+pip install peft accelerate trl bitsandbytes
+
+# 3. Unsloth 설치 (triton-windows 자동 포함)
+pip install unsloth
+```
+
+> ⚠️ Windows에서 Unsloth 설치 시 PyTorch가 CPU 버전으로 다운그레이드될 수 있음
+> → 설치 후 `pip install --force-reinstall torch torchvision --index-url https://download.pytorch.org/whl/cu128`로 재설치
+
+#### Linux/WSL (선택)
+```bash
 pip install "unsloth[colab-new] @ git+https://github.com/unslothai/unsloth.git"
 pip install --no-deps trl peft accelerate bitsandbytes
-
-# 또는 pip 직접 설치
-pip install unsloth
 ```
 
 
@@ -524,6 +544,12 @@ print(formatted_dataset[0]["text"])
 
 ### 8-1. 전체 설정 한눈에
 
+> 💡 **GPU VRAM별 권장 설정**
+> - 24GB+ (RTX 4090): `Qwen2.5-7B-Instruct`, `MAX_SEQ_LENGTH=2048`, `BATCH_SIZE=2`
+> - 12~16GB (RTX 4060 Ti / 3080): `Qwen2.5-7B-Instruct`, `MAX_SEQ_LENGTH=1024`, `BATCH_SIZE=1`
+> - **6~8GB (RTX 3060 Mobile / 3070): `Qwen2.5-1.5B-Instruct`, `MAX_SEQ_LENGTH=1024`, `BATCH_SIZE=2`**
+> - 4GB 이하: Colab 또는 Cloud GPU 권장
+
 ```python
 import torch
 from unsloth import FastLanguageModel
@@ -535,15 +561,15 @@ from datasets import load_dataset
 # ───────────────────────────────────────
 # 설정 값 (여기만 수정하면 됨)
 # ───────────────────────────────────────
-MODEL_NAME     = "Qwen/Qwen2.5-7B-Instruct"  # 베이스 모델
-MAX_SEQ_LENGTH = 2048                          # 최대 시퀀스 길이
-LORA_R         = 16                            # LoRA rank
-LORA_ALPHA     = 32                            # LoRA alpha
-BATCH_SIZE     = 2                             # 배치 크기
-GRAD_ACCUM     = 8                             # 그라디언트 누적 (유효 배치=16)
-EPOCHS         = 3                             # 에포크
-LEARNING_RATE  = 2e-4                          # 학습률
-OUTPUT_DIR     = "./qwen_finetuned"            # 저장 경로
+MODEL_NAME     = "Qwen/Qwen2.5-1.5B-Instruct"  # RTX 3060 6GB 환경 (24GB+: 7B 권장)
+MAX_SEQ_LENGTH = 1024                            # 6GB VRAM에 맞춰 축소 (24GB+: 2048)
+LORA_R         = 16                              # LoRA rank
+LORA_ALPHA     = 32                              # LoRA alpha
+BATCH_SIZE     = 2                               # 배치 크기 (OOM 시 1로 줄일 것)
+GRAD_ACCUM     = 8                               # 그라디언트 누적 (유효 배치=16)
+EPOCHS         = 3                               # 에포크
+LEARNING_RATE  = 2e-4                            # 학습률
+OUTPUT_DIR     = "./qwen_finetuned"              # 저장 경로
 ```
 
 
