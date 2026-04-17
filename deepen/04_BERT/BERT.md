@@ -1,4 +1,3 @@
-[미검증]
 ## 0. 시리즈
 
 | 심화편 | 제목 | 난이도 | 역할 |
@@ -9,6 +8,11 @@
 | [**심화 4편**](https://duckport.pages.dev/posts/BERT)⬅️ | BERT / GPT 원리와 활용 | ⭐⭐⭐⭐ | 언어 모델 |
 | [심화 5편](https://duckport.pages.dev/posts/Finetuning_Deep) | HuggingFace로 LLM Fine-tuning | ⭐⭐⭐⭐⭐ | LLM 실전 |
 
+### 실습코드
+```bush
+git clone https://github.com/duckgeunpark/Ai-practice.git
+```
+> 해당 게시글과 실습 코드가 조금 상이할 수 있음
 
 ***
 
@@ -332,17 +336,68 @@ for r in result[:3]:
 #   berlin          확률: 0.0007
 
 
-# ── 질의응답 ────────────────────────────────────────────────────
-qa = pipeline("question-answering")
+# ── 질의응답 (QA) — AutoModel 직접 사용 ───────────────────────
+# ⚠️ transformers 5.5.0의 pipeline("question-answering") 등록 누락 이슈로
+#    AutoModelForQuestionAnswering을 직접 사용 (pipeline 내부 동작 노출)
+import torch
+from transformers import AutoModelForQuestionAnswering
 
-context = ""
-Hugging Face is a company that develops tools for building machine learning
-applications. It was founded in 2016 and is headquartered in New York City.
-""
-result = qa(question="When was Hugging Face founded?", context=context)
-print(f"  답변: {result['answer']}")   # 2016
-print(f"  점수: {result['score']:.4f}")
+qa_name  = "distilbert-base-cased-distilled-squad"
+qa_tok   = AutoTokenizer.from_pretrained(qa_name)
+qa_model = AutoModelForQuestionAnswering.from_pretrained(qa_name)
+
+question = "When was Hugging Face founded?"
+context  = (
+    "Hugging Face is a company that develops tools for building "
+    "machine learning applications. It was founded in 2016 and "
+    "is headquartered in New York City."
+)
+
+inputs = qa_tok(question, context, return_tensors="pt")
+with torch.no_grad():
+    out = qa_model(**inputs)
+
+# start/end logits 최대값 위치 → 답변 span 추출
+start = out.start_logits.argmax().item()
+end   = out.end_logits.argmax().item() + 1
+answer = qa_tok.decode(inputs["input_ids"][0][start:end],
+                       skip_special_tokens=True)
+
+# 신뢰도 = start확률 × end확률
+s_prob = torch.softmax(out.start_logits, dim=-1)[0, start].item()
+e_prob = torch.softmax(out.end_logits,   dim=-1)[0, end - 1].item()
+score  = s_prob * e_prob
+
+print(f"  답변: {answer}")     # 2016
+print(f"  점수: {score:.4f}")
 ```
+
+"""
+사용 장치: cuda:0
+
+[1/4] sentiment-analysis
+  레이블: POSITIVE    점수: 0.9999
+  레이블: NEGATIVE    점수: 0.9995
+
+[2/4] text-generation (gpt2)
+  생성 1: Artificial intelligence will only become more powerful to help us fight terrorism
+  and other criminal activities.
+  The idea of artificial intelligence, or AI, has been around since the 1960s, but it has
+  been a long time
+  생성 2: Artificial intelligence will be the dominant technology in computer science and
+  engineering. That's because the goal is to get all the right parts of the machine working,
+  as well as get the right parts at the right time.
+
+[3/4] fill-mask (bert-base-uncased)
+  paris           확률: 0.4168
+  lille           확률: 0.0714
+  lyon            확률: 0.0634
+
+[4/4] question-answering (AutoModel 직접 사용)
+  질문: When was Hugging Face founded?
+  답변: 2016
+  점수: 0.9353
+"""
 
 
 ### 5-3. AutoModel / AutoTokenizer
@@ -358,6 +413,20 @@ model     = AutoModel.from_pretrained(model_name)
 print(f"모델 파라미터 수: {sum(p.numel() for p in model.parameters()):,}")
 # 109,482,240 (약 1억 1천만)
 ```
+
+"""
+모델 이름:        bert-base-uncased
+총 파라미터 수:   109,482,240
+은닉 차원:        768
+레이어 수:        12
+어텐션 헤드 수:   12
+어휘 크기:        30,522
+
+last_hidden_state shape: (1, 6, 768)
+[CLS] 벡터 shape:        (1, 768)
+[CLS] 벡터 앞 5개 값:    [-0.0781, 0.1587, 0.0400, -0.1986, -0.3442]
+"""
+
 ***
 
 ### 5-4. 토크나이저(Tokenizer) 완벽 이해
@@ -437,6 +506,31 @@ print(f"디코딩: {decoded}")
 - 어휘 사전을 작게 유지하면서 다양한 단어 표현 가능
 ```
 
+"""
+원문:   Hello, I am learning about BERT!
+토큰:   ['hello', ',', 'i', 'am', 'learning', 'about', 'bert', '!']
+
+input_ids:      [101, 7592, 1010, 1045, 2572, 4083, 2055, 14324, 999, 102, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+attention_mask: [1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+token_type_ids: [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+디코딩:         [CLS] hello, i am learning about bert! [SEP] [PAD] [PAD] ... (중략)
+
+─ 문장 쌍 인코딩 ─
+input_ids:      [101, 1045, 2018, 6265, 1012, 102, 1045, 2371, 2440, 5728, 1012, 102, 0, 0, 0, 0, 0, 0, 0, 0]
+token_type_ids: [0, 0, 0, 0, 0, 0, 1, 1, 1, 1, 1, 1, 0, 0, 0, 0, 0, 0, 0, 0]
+                ↑ 0 = 문장A, 1 = 문장B, 0(뒤쪽) = 패딩
+
+─ 서브워드 토큰화 비교 ─
+단어              | BERT (WordPiece)                         | GPT-2 (BPE)
+------------------------------------------------------------------------------------------
+unbelievable    | ['unbelievable']                         | ['un', 'bel', 'iev', 'able']
+playing         | ['playing']                              | ['playing']
+tokenization    | ['token', '##ization']                   | ['token', 'ization']
+lowest          | ['lowest']                               | ['low', 'est']
+
+"""
+>💡 ##는 BERT WordPiece에서 '앞 토큰과 이어지는 서브워드' 표시
+> Ġ는 GPT-2 BPE에서 '단어 시작 = 앞에 공백' 표시
 
 ***
 
@@ -624,6 +718,7 @@ Warm-up 스텝: 33
 """
 
 > 💡 **AdamW** — Adam 옵티마이저에 Weight Decay를 올바르게 적용한 버전입니다. BERT Fine-tuning의 표준 옵티마이저입니다.
+>
 > 💡 **Warm-up** — 처음 몇 스텝 동안 학습률을 0에서 LR까지 서서히 높입니다. 사전 학습된 가중치가 초반에 급격히 망가지는 것을 방지합니다.
 
 ### 6-5. 학습 루프
@@ -960,33 +1055,37 @@ generate_texts("The most important thing about deep learning is", n=3)
 ```
 
 """
-        Setting `pad_token_id` to `eos_token_id`:50256 for open-end generation.
-        프롬프트: "Once upon a time in a land far away,"
+Setting `pad_token_id` to `eos_token_id`:50256 for open-end generation.
+프롬프트: "Once upon a time in a land far away,"
   [1] Once upon a time in a land far away, a white man, whom the Lord hath chosen as a prophet, 
   and made a king over the Jews, that they might judge him.
   And he did, and went out. And the Jews scattered among the nations, and slew him. 
   So they brought him back to Babylon. But he spake unto them, saying, Behold, I am your God; I am a god, and am your
   [2] Once upon a time in a land far away, with a vast, vast, expansive land far from any nation or country,
   that the nations of the earth might be able to unite to save the people. 
-  And with these words they were lifted up into heaven, where they lay upon the throne of the Most High God, as high as the throne above the heavens.
+  And with these words they were lifted up into heaven, where they lay upon the throne of the Most High God, 
+  as high as the throne above the heavens.
   And it is this same God who was the first to go forth and give this people
-  [3] Once upon a time in a land far away, there was a small group of people, mostly merchants and others, that wished to get back to their old lives. 
+  [3] Once upon a time in a land far away, there was a small group of people, mostly merchants and others, 
+  that wished to get back to their old lives. 
   They would not, as they now say, go back to the land that they used to be in. It was called Zilchay.
   It was a little bit of a town, but it was still a small town, and there were very few people there. All
-
-
-        Setting `pad_token_id` to `eos_token_id`:50256 for open-end generation.
-        프롬프트: "The most important thing about deep learning is"
-    [1] The most important thing about deep learning is that the training data we have here is really useful for the next step to solving complex algorithms. 
-    And we need to think about how to do that. We need to create more general deep learning algorithms, like neural networks, to do those general operations. 
-    If you want to do a deep learning neural network, like a neural network to see how much of a human is alive, and how much more we
-    [2] The most important thing about deep learning is the ability to train your neural networks to recognize objects, and it's only natural that they will. You can use deep
-    learning to learn how to recognize what you're seeing in a movie or a picture to make a decision. But you don't have to learn to recognize people.
-    The other important thing is the use of deep learning in the classroom, where students learn to teach, and there
-    [3] The most important thing about deep learning is that it allows you to design your applications as you work on them.
-    In this case, our application is a WebApp. It has a main entry point called Page 1, 
-    and a sub-entry called "Hello World!" which contains some images of the page.
-    We can then make the WebApp a custom content store. , which contains the text and images of Page 1. We
+--
+Setting `pad_token_id` to `eos_token_id`:50256 for open-end generation.
+프롬프트: "The most important thing about deep learning is"
+  [1] The most important thing about deep learning is that the training data we have here is really useful for the next step to solving complex algorithms. 
+  And we need to think about how to do that. We need to create more general deep learning algorithms, 
+  like neural networks, to do those general operations. 
+  If you want to do a deep learning neural network, like a neural network to see how much of a human is alive, and how much more we
+  [2] The most important thing about deep learning is the ability to train your neural networks to recognize objects, 
+  and it's only natural that they will.
+  You can use deep learning to learn how to recognize what you're seeing in a movie or a picture to make a decision. 
+  But you don't have to learn to recognize people.
+  The other important thing is the use of deep learning in the classroom, where students learn to teach, and there
+  [3] The most important thing about deep learning is that it allows you to design your applications as you work on them.
+  In this case, our application is a WebApp. It has a main entry point called Page 1, 
+  and a sub-entry called "Hello World!" which contains some images of the page.
+  We can then make the WebApp a custom content store. , which contains the text and images of Page 1. We
 """
 
 ***

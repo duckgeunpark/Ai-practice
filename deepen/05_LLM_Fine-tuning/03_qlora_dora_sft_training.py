@@ -7,6 +7,15 @@
 """
 
 import os
+
+# ── 작업 디렉토리/캐시 위치를 LLM_Fine-tuning/data 로 고정 ──
+# 반드시 unsloth import보다 먼저 실행해야 함
+# (Unsloth는 import 시점의 CWD 또는 UNSLOTH_COMPILE_LOCATION을 캡처)
+_data_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "data")
+os.makedirs(_data_dir, exist_ok=True)
+os.environ["UNSLOTH_COMPILE_LOCATION"] = os.path.join(_data_dir, "unsloth_compiled_cache")
+os.chdir(_data_dir)
+
 import torch
 import matplotlib.pyplot as plt
 from unsloth import FastLanguageModel
@@ -14,11 +23,6 @@ from trl import SFTConfig, SFTTrainer
 from peft import LoraConfig, TaskType, PeftModel
 from datasets import load_dataset
 from transformers import AutoModelForCausalLM
-
-# ── 작업 디렉토리를 스크립트 위치(LLM_Fine-tuning)로 고정 ──
-# 모든 출력 폴더(qwen_finetuned, qwen_lora_adapter, unsloth_compiled_cache 등)가
-# 어디서 실행하든 LLM_Fine-tuning 폴더 안에 생성되도록 함
-os.chdir(os.path.dirname(os.path.abspath(__file__)))
 
 # ── 한글 폰트 설정 (Windows: Malgun Gothic) ─────────
 plt.rcParams["font.family"]      = "Malgun Gothic"
@@ -235,11 +239,20 @@ tokenizer.save_pretrained("./qwen_lora_adapter")
 print("LoRA 어댑터 저장 완료 (~80MB)")
 
 # ── 방법 2: 베이스 모델과 병합 후 저장 (독립 사용 가능) ───────
-model_merged = model.merge_and_unload()
-model_merged.save_pretrained("./qwen_finetuned_merged",
-                              safe_serialization=True)
-tokenizer.save_pretrained("./qwen_finetuned_merged")
-print("병합 모델 저장 완료 (~14GB)")
+# ⚠️ 주의: 4비트 양자화 모델 + LoRA 병합은 transformers 5.5.0의
+#   새로운 weight conversion 시스템과 호환되지 않아 NotImplementedError 발생.
+#   또한 bnb 경고대로 4-bit linear 병합은 rounding error로 추론 결과가 달라질 수 있음.
+#   QLoRA 사용 시에는 어댑터만 저장(방법 1) + 추론 시 베이스 모델 + 어댑터 로드가 권장 방식.
+try:
+    model_merged = model.merge_and_unload()
+    model_merged.save_pretrained("./qwen_finetuned_merged",
+                                  safe_serialization=True)
+    tokenizer.save_pretrained("./qwen_finetuned_merged")
+    print("병합 모델 저장 완료 (~14GB)")
+except NotImplementedError as e:
+    print(f"⚠️ 4-bit + LoRA 병합 저장 미지원 (transformers 5.5.0): {e}")
+    print("   → 어댑터만 저장된 상태(./qwen_lora_adapter)를 사용하세요.")
+    print("   → 추론 시: PeftModel.from_pretrained(base, './qwen_lora_adapter')")
 
 # ── 어댑터 불러오기 ──────────────────────────
 base_model = AutoModelForCausalLM.from_pretrained(

@@ -174,6 +174,29 @@ model.print_trainable_parameters()
 # trainable params: 83,886,080 || all params: 7,615,647,744 || trainable%: 1.10
 ```
 
+"""
+1. 모델의 프로젝션 레이어 확인
+model.layers.0.self_attn.q_proj
+model.layers.0.self_attn.k_proj
+model.layers.0.self_attn.v_proj
+model.layers.0.self_attn.o_proj
+model.layers.0.mlp.gate_proj
+model.layers.0.mlp.up_proj
+model.layers.0.mlp.down_proj
+  ... (layers 1~26 동일 구조 중략) ...
+model.layers.27.self_attn.q_proj
+model.layers.27.self_attn.k_proj
+model.layers.27.self_attn.v_proj
+model.layers.27.self_attn.o_proj
+model.layers.27.mlp.gate_proj
+model.layers.27.mlp.up_proj
+model.layers.27.mlp.down_proj
+
+2. LoRA 어댑터 부착
+trainable params: 18,464,768 || all params: 1,562,179,072 || trainable%: 1.1820
+(※ 실습 환경: Qwen2.5-1.5B-Instruct, RTX 3060 6GB)
+"""
+
 
 ***
 
@@ -474,6 +497,22 @@ plt.grid(True)
 plt.show()
 ```
 
+"""
+Dataset({
+    features: ['instruction', 'input', 'output', 'text'],
+    num_rows: 52002
+})
+
+첫 번째 샘플:
+{'instruction': 'Give three tips for staying healthy.',
+ 'input': '',
+ 'output': '1.Eat a balanced diet and make sure to include plenty of fruits and vegetables.
+  2. Exercise regularly to keep your body active and strong.
+  3. Get enough sleep and maintain a consistent sleep schedule.'}
+"""
+
+[그래프삽입]
+
 
 ### 7-4. 커스텀 데이터셋 만들기
 
@@ -499,6 +538,13 @@ raw_data = [
 custom_dataset = Dataset.from_list(raw_data)
 print(custom_dataset)
 ```
+
+"""
+Dataset({
+    features: ['instruction', 'input', 'output'],
+    num_rows: 2
+})
+"""
 
 
 ### 7-5. Chat Template 적용 함수
@@ -536,6 +582,18 @@ formatted_dataset = dataset.map(
 print("변환 후 샘플:")
 print(formatted_dataset[0]["text"])
 ```
+
+"""
+변환 후 샘플:
+<|im_start|>system
+당신은 도움이 되는 한국어 AI 어시스턴트입니다.<|im_end|>
+<|im_start|>user
+Give three tips for staying healthy.<|im_end|>
+<|im_start|>assistant
+1.Eat a balanced diet and make sure to include plenty of fruits and vegetables.
+2. Exercise regularly to keep your body active and strong.
+3. Get enough sleep and maintain a consistent sleep schedule.<|im_end|>
+"""
 
 
 ***
@@ -594,6 +652,18 @@ print(f"어휘 크기: {tokenizer.vocab_size:,}")
 print(f"최대 위치 임베딩: {model.config.max_position_embeddings:,}")
 ```
 
+"""
+==((====))==  Unsloth 2026.4.5: Fast Qwen2 patching. Transformers: 5.5.0.
+   \\   /|    NVIDIA GeForce RTX 3060 Laptop GPU. Max memory: 6.0 GB.
+O^O/ \_/ \    Torch: 2.10.0+cu128. CUDA: 8.6. Bfloat16 = TRUE.
+\        /    FA [Xformers = 0.0.35. FA2 = False]
+ "-____-"     Free license: http://github.com/unslothai/unsloth
+
+모델 로드 완료
+어휘 크기: 151,643
+최대 위치 임베딩: 32,768
+"""
+
 
 ### 8-3. QLoRA + DoRA 어댑터 설정
 
@@ -614,6 +684,12 @@ model = FastLanguageModel.get_peft_model(
 model.print_trainable_parameters()
 # trainable params: 83,886,080 || all params: 7,615,647,744 || trainable%: 1.10%
 ```
+
+"""
+Unsloth 2026.4.5 patched 28 layers with 0 QKV layers, 0 O layers and 0 MLP layers.
+trainable params: 19,109,888 || all params: 1,562,824,192 || trainable%: 1.2228
+(※ DoRA 활성화로 magnitude 벡터가 추가되어 LoRA 단독(18.4M)보다 약간 많음)
+"""
 
 
 ### 8-4. 데이터 준비
@@ -639,6 +715,19 @@ print(f"훈련 샘플: {len(train_dataset)}")
 print(f"검증 샘플: {len(eval_dataset)}")
 print(f"\n샘플 텍스트:\n{train_dataset[0]['text'][:200]}...")
 ```
+
+"""
+훈련 샘플: 950
+검증 샘플: 50
+
+샘플 텍스트:
+<|im_start|>system
+당신은 도움이 되는 한국어 AI 어시스턴트입니다.<|im_end|>
+<|im_start|>user
+Generate a list of 5 creative ways to use technology in the classroom.<|im_end|>
+<|im_start|>assistant
+Five creative ways to u...
+"""
 
 
 ### 8-5. SFTTrainer — 학습 설정 및 실행
@@ -693,6 +782,34 @@ print(f"학습 소요 시간: {trainer_stats.metrics['train_runtime']:.0f}초")
 print(f"학습 중 최대 VRAM: {used_memory} GB")
 ```
 
+"""
+Unsloth: Packing enabled - training is >2x faster and uses less VRAM!
+GPU: NVIDIA GeForce RTX 3060 Laptop GPU
+최대 VRAM: 6.0 GB
+학습 전 VRAM 사용: 1.674 GB
+
+==((====))==  Unsloth - 2x faster free finetuning | Num GPUs used = 1
+   \\   /|    Num examples = 95 | Num Epochs = 3 | Total steps = 18
+O^O/ \_/ \    Batch size per device = 2 | Gradient accumulation steps = 8
+\        /    Total batch size (2 x 8 x 1) = 16
+ "-____-"     Trainable parameters = 19,109,888 of 1,562,824,192 (1.22% trained)
+
+{'loss': '2.479', 'grad_norm': '3.423', 'learning_rate': '0',        'epoch': '0.17'}
+{'loss': '2.477', 'grad_norm': '3.636', 'learning_rate': '0.0002',   'epoch': '0.33'}
+{'loss': '2.03',  'grad_norm': '3.178', 'learning_rate': '0.000198', 'epoch': '0.50'}
+{'loss': '1.64',  'grad_norm': '2.901', 'learning_rate': '0.000193', 'epoch': '0.67'}
+{'loss': '1.496', 'grad_norm': '1.717', 'learning_rate': '0.000185', 'epoch': '0.83'}
+{'eval_loss': '1.414', 'epoch': '0.83'}
+{'loss': '1.283', 'grad_norm': '1.604', 'learning_rate': '0.000174', 'epoch': '1.00'}
+  ... (중략: loss 1.18→1.17→1.23→1.10 수준으로 수렴) ...
+{'loss': '1.072', 'grad_norm': '0.234', 'learning_rate': '1.7e-06',  'epoch': '3.00'}
+{'eval_loss': '1.239', 'epoch': '3.00'}
+
+학습 완료!
+학습 소요 시간: 780초
+학습 중 최대 VRAM: 9.135 GB
+"""
+
 > 💡 **paged_adamw_8bit** — QLoRA 학습에 특화된 옵티마이저입니다. 옵티마이저 상태를 GPU/CPU 간에 페이징하여 VRAM을 추가로 절감합니다.
 >
 > 💡 **packing=True** — 짧은 학습 샘플들을 `max_seq_length`에 맞게 이어 붙여 패딩 낭비 없이 GPU를 풀로 활용합니다. 보통 10~30% 속도 향상.
@@ -728,6 +845,8 @@ plt.tight_layout()
 plt.show()
 ```
 
+[그래프삽입]
+
 
 ### 8-7. LoRA 어댑터 저장 및 병합
 
@@ -756,6 +875,14 @@ base_model = AutoModelForCausalLM.from_pretrained(
 model_loaded = PeftModel.from_pretrained(base_model, "./qwen_lora_adapter")
 print("LoRA 어댑터 불러오기 완료")
 ```
+
+"""
+LoRA 어댑터 저장 완료 (~80MB)
+⚠️ 4-bit + LoRA 병합 저장 미지원 (transformers 5.5.0):
+   → 어댑터만 저장된 상태(./qwen_lora_adapter)를 사용하세요.
+   → 추론 시: PeftModel.from_pretrained(base, './qwen_lora_adapter')
+LoRA 어댑터 불러오기 완료
+"""
 
 
 ***
@@ -815,6 +942,34 @@ for question in test_questions:
     print("=" * 60)
 ```
 
+"""
+1. 파인튜닝 모델 응답 테스트
+
+질문: 한국의 대표적인 전통 음식 3가지를 설명해줘
+응답:
+1. 볶음: 한국에서 가장 널리 알려진 전통 음식 중 하나로,
+   주요 재료로는 고기와 양념, 소스 등으로 만들어집니다.
+2. 김치: 곡물, 뼈, 약간의 맥주, 그리고 고기 등을 넣고
+   담그는 것을 의미하는 한국의 전통적인 음식입니다.
+3. 밥: 한국에서 가장 기본적으로 제공되는 음식이며,
+   다양한 형태와 방식으로 제공됩니다.
+
+질문: 파이썬에서 딕셔너리와 리스트의 차이점은?
+응답:
+디렉토리는 한 번에 여러 개의 키와 값을 가질 수 있는 집합입니다.
+List는 배열을 나타내며 모든 요소는 동일한 타입의 데이터를 가지게 됩니다.
+List는 순서가 있으며 각 요소는 0부터 n까지의 숫자로 인식됩니다.
+
+질문: 머신러닝과 딥러닝의 차이를 초보자도 이해하도록 설명해줘
+응답:
+머신러닝은 데이터를 학습하고 분석하는 기능을 가진 알고리즘이며 ...
+딥러닝은 머신러닝의 한 유형이며, 더 복잡하고 구조화된 네트워크를
+통한 학습 과정을 의미합니다. ... Neural Networks에서 이득을 보았습니다.
+
+(※ 1.5B + 1,000개 학습 → 문장 구조는 잡히나 사실 정확성은 부족.
+   7B 이상 모델 + 더 많은 데이터로 개선 가능)
+"""
+
 
 ### 9-2. 자동 평가 지표 — ROUGE
 
@@ -843,6 +998,18 @@ print("\n평가 결과 (ROUGE F1):")
 for k, v in scores.items():
     print(f"  {k.upper():8s}: {sum(v)/len(v):.4f}")
 ```
+
+"""
+2. ROUGE 자동 평가 (샘플 10개)
+
+평가 결과 (ROUGE F1):
+  ROUGE1  : 0.4314
+  ROUGE2  : 0.1170
+  ROUGEL  : 0.3589
+
+(※ ROUGE1=0.43은 소형 모델+소량 데이터 대비 양호한 수준.
+   정답과 단어 겹침 43%, 구문 순서 일치 36% 수준)
+"""
 
 
 ### 9-3. LLM-as-Judge — GPT로 응답 품질 자동 평가
@@ -896,6 +1063,14 @@ verdict = llm_judge(test_q, resp_base, resp_finetuned)
 print(f"질문: {test_q}")
 print(f"GPT 평가: {verdict}")
 ```
+
+"""
+3. LLM-as-Judge (옵션 — OPENAI_API_KEY 환경변수 필요)
+⚠️  OPENAI_API_KEY 환경변수가 없어 LLM-as-Judge 섹션을 스킵합니다.
+   사용하려면 다음과 같이 설정 후 재실행하세요:
+     PowerShell: $env:OPENAI_API_KEY="sk-..."
+     cmd      : set OPENAI_API_KEY=sk-...
+"""
 
 
 ***
@@ -1074,6 +1249,27 @@ orpo_stats = orpo_trainer.train()
 print(f"학습 완료! 총 시간: {orpo_stats.metrics['train_runtime']:.0f}초")
 ```
 
+"""
+==((====))==  Unsloth - 2x faster free finetuning | Num GPUs used = 1
+   \\   /|    Num examples = 500 | Num Epochs = 1 | Total steps = 63
+O^O/ \_/ \    Batch size per device = 2 | Gradient accumulation steps = 4
+\        /    Total batch size (2 x 4 x 1) = 8
+ "-____-"     Trainable parameters = 19,109,888 of 1,562,824,192 (1.22% trained)
+
+{'loss': '1.518', 'rewards/accuracies': '0.4375', 'rewards/margins': '0.0005', 'nll_loss': '1.446', 'epoch': '0.16'}
+{'loss': '1.526', 'rewards/accuracies': '0.6625', 'rewards/margins': '0.0066', 'nll_loss': '1.459', 'epoch': '0.32'}
+{'loss': '1.626', 'rewards/accuracies': '0.5',    'rewards/margins': '0.0033', 'nll_loss': '1.556', 'epoch': '0.48'}
+{'loss': '1.381', 'rewards/accuracies': '0.6625', 'rewards/margins': '0.0065', 'nll_loss': '1.316', 'epoch': '0.64'}
+{'loss': '1.478', 'rewards/accuracies': '0.5125', 'rewards/margins': '0.0038', 'nll_loss': '1.408', 'epoch': '0.80'}
+{'loss': '1.471', 'rewards/accuracies': '0.5375', 'rewards/margins': '0.0013', 'nll_loss': '1.399', 'epoch': '0.96'}
+
+학습 완료! 총 시간: 7844초 (약 2시간 10분)
+ORPO 어댑터 저장 완료: ./qwen_orpo_adapter
+
+(※ rewards/accuracies: 선호 응답을 올바르게 구분하는 비율.
+   0.44→0.66 수준으로 학습이 진행되며 선호도 구분 능력 향상)
+"""
+
 
 ### 10-6. ORPO 학습 곡선 시각화
 
@@ -1103,6 +1299,8 @@ plt.suptitle("ORPO 학습 손실 변화", fontsize=14, fontweight="bold")
 plt.tight_layout()
 plt.show()
 ```
+
+[그래프삽입]
 
 
 ***
